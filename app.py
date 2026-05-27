@@ -1,281 +1,270 @@
 import streamlit as st
 import pandas as pd
+from io import BytesIO
 
-from compare_engine import compare_excel_files
-
-# ==========================================
+# =========================================
 # PAGE CONFIG
-# ==========================================
+# =========================================
 st.set_page_config(
-    page_title="SAC Compare Tool",
+    page_title="SAC Comparison Tool",
     layout="wide"
 )
 
-# ==========================================
-# LOAD CSS
-# ==========================================
-def load_css():
-
-    try:
-
-        with open("styles.css") as f:
-
-            st.markdown(
-                f"<style>{f.read()}</style>",
-                unsafe_allow_html=True
-            )
-
-    except:
-        pass
-
-load_css()
-
-# ==========================================
+# =========================================
 # TITLE
-# ==========================================
-st.title("📊 SAC Model Comparison Tool")
+# =========================================
+st.title("📊 SAC Story / Model Comparison Tool")
 
 st.markdown("""
-Compare SAC exports using Excel files.
+Upload two SAC exported Excel files.
 
-### Features
-- Compare Measures
-- Compare Dimensions
-- Compare Widgets
-- Detect Missing Items
-- Generate Downloadable Report
+The tool compares:
+
+- Measures
+- Dimensions
+- Widgets
+- Missing Fields
+- Matching Fields
 """)
 
 st.markdown("---")
 
-# ==========================================
+# =========================================
 # SIDEBAR
-# ==========================================
+# =========================================
 st.sidebar.header("📂 Upload Files")
 
-excel_a = st.sidebar.file_uploader(
+file_a = st.sidebar.file_uploader(
     "Upload Excel File A",
     type=["xlsx"]
 )
 
-excel_b = st.sidebar.file_uploader(
+file_b = st.sidebar.file_uploader(
     "Upload Excel File B",
     type=["xlsx"]
 )
 
-# ==========================================
+# =========================================
+# HELPER FUNCTION
+# =========================================
+def extract_all_values(workbook):
+
+    values = []
+
+    for sheet_name, df in workbook.items():
+
+        try:
+
+            # Convert all values to string
+            flat_values = (
+                df.astype(str)
+                .fillna("")
+                .values
+                .flatten()
+            )
+
+            for item in flat_values:
+
+                clean_item = str(item).strip()
+
+                if clean_item != "" and clean_item.lower() != "nan":
+
+                    values.append({
+                        "Sheet": sheet_name,
+                        "Value": clean_item
+                    })
+
+        except:
+            pass
+
+    return pd.DataFrame(values)
+
+# =========================================
 # MAIN
-# ==========================================
-if excel_a and excel_b:
+# =========================================
+if file_a and file_b:
 
     try:
 
-        # ==========================================
-        # LOAD EXCEL SHEETS
-        # ==========================================
+        # =========================================
+        # READ EXCEL
+        # =========================================
         workbook_a = pd.read_excel(
-            excel_a,
+            file_a,
             sheet_name=None
         )
 
         workbook_b = pd.read_excel(
-            excel_b,
+            file_b,
             sheet_name=None
         )
 
-        # ==========================================
-        # SHOW SHEETS
-        # ==========================================
-        st.subheader("📑 Sheets Found")
+        # =========================================
+        # EXTRACT VALUES
+        # =========================================
+        df_a = extract_all_values(workbook_a)
+        df_b = extract_all_values(workbook_b)
 
-        col1, col2 = st.columns(2)
+        # =========================================
+        # UNIQUE VALUES
+        # =========================================
+        values_a = set(df_a["Value"].unique())
+        values_b = set(df_b["Value"].unique())
 
-        with col1:
+        # =========================================
+        # COMPARISON
+        # =========================================
+        all_values = sorted(
+            list(values_a.union(values_b))
+        )
 
-            st.write("### Excel A Sheets")
-            st.write(list(workbook_a.keys()))
+        comparison_rows = []
 
-        with col2:
+        for value in all_values:
 
-            st.write("### Excel B Sheets")
-            st.write(list(workbook_b.keys()))
+            in_a = value in values_a
+            in_b = value in values_b
+
+            if in_a and in_b:
+                status = "Same"
+
+            elif in_a and not in_b:
+                status = "Missing in B"
+
+            else:
+                status = "Missing in A"
+
+            comparison_rows.append({
+                "Field": value,
+                "Exists in A": "Yes" if in_a else "No",
+                "Exists in B": "Yes" if in_b else "No",
+                "Status": status
+            })
+
+        result_df = pd.DataFrame(comparison_rows)
+
+        # =========================================
+        # METRICS
+        # =========================================
+        total = len(result_df)
+
+        same_count = len(
+            result_df[result_df["Status"] == "Same"]
+        )
+
+        diff_count = len(
+            result_df[result_df["Status"] != "Same"]
+        )
+
+        col1, col2, col3 = st.columns(3)
+
+        col1.metric("Total Fields", total)
+        col2.metric("Matched", same_count)
+        col3.metric("Differences", diff_count)
 
         st.markdown("---")
 
-        # ==========================================
-        # COMPARE FILES
-        # ==========================================
-        result_df = compare_excel_files(
-            workbook_a,
-            workbook_b
+        # =========================================
+        # FILTER
+        # =========================================
+        filter_option = st.selectbox(
+            "Filter Results",
+            [
+                "All",
+                "Same",
+                "Missing in A",
+                "Missing in B"
+            ]
         )
 
-        # ==========================================
-        # EMPTY CHECK
-        # ==========================================
-        if result_df.empty:
+        if filter_option == "All":
 
-            st.error("""
-No comparison data found.
-
-Make sure both Excel files contain:
-- Measures sheet
-- Dimensions sheet
-- Widgets sheet
-""")
+            filtered_df = result_df
 
         else:
 
-            # ==========================================
-            # METRICS
-            # ==========================================
-            total_items = len(result_df)
-
-            matched_items = len(
-                result_df[
-                    result_df["Status"] == "Same"
-                ]
-            )
-
-            missing_items = len(
-                result_df[
-                    result_df["Status"] != "Same"
-                ]
-            )
-
-            col1, col2, col3 = st.columns(3)
-
-            with col1:
-
-                st.metric(
-                    "Total Items",
-                    total_items
-                )
-
-            with col2:
-
-                st.metric(
-                    "Matched",
-                    matched_items
-                )
-
-            with col3:
-
-                st.metric(
-                    "Differences",
-                    missing_items
-                )
-
-            st.markdown("---")
-
-            # ==========================================
-            # FILTER OPTION
-            # ==========================================
-            filter_option = st.selectbox(
-
-                "Filter Results",
-
-                [
-                    "All",
-                    "Same",
-                    "Missing in A",
-                    "Missing in B"
-                ]
-
-            )
-
-            if filter_option == "All":
-
-                filtered_df = result_df
-
-            else:
-
-                filtered_df = result_df[
-                    result_df["Status"] == filter_option
-                ]
-
-            # ==========================================
-            # RESULT TABLE
-            # ==========================================
-            st.subheader("📋 Comparison Result")
-
-            st.dataframe(
-                filtered_df,
-                use_container_width=True,
-                height=600
-            )
-
-            st.markdown("---")
-
-            # ==========================================
-            # DIFFERENCE REPORT
-            # ==========================================
-            st.subheader("⚠ Difference Report")
-
-            diff_df = result_df[
-                result_df["Status"] != "Same"
+            filtered_df = result_df[
+                result_df["Status"] == filter_option
             ]
 
-            if not diff_df.empty:
+        # =========================================
+        # RESULT TABLE
+        # =========================================
+        st.subheader("📋 Comparison Result")
 
-                st.dataframe(
-                    diff_df,
-                    use_container_width=True,
-                    height=400
-                )
+        st.dataframe(
+            filtered_df,
+            use_container_width=True,
+            height=600
+        )
 
-            else:
+        # =========================================
+        # DIFFERENCE TABLE
+        # =========================================
+        st.markdown("---")
 
-                st.success(
-                    "✅ No Differences Found"
-                )
+        st.subheader("⚠ Difference Report")
 
-            st.markdown("---")
+        diff_df = result_df[
+            result_df["Status"] != "Same"
+        ]
 
-            # ==========================================
-            # EXPORT EXCEL
-            # ==========================================
-            export_path = "/tmp/sac_compare_result.xlsx"
+        if not diff_df.empty:
 
-            result_df.to_excel(
-                export_path,
-                index=False
+            st.dataframe(
+                diff_df,
+                use_container_width=True
             )
 
-            with open(export_path, "rb") as file:
+        else:
 
-                st.download_button(
+            st.success("✅ No Differences Found")
 
-                    label="⬇ Download Comparison Excel",
+        # =========================================
+        # EXPORT EXCEL
+        # =========================================
+        output = BytesIO()
 
-                    data=file,
+        with pd.ExcelWriter(
+            output,
+            engine="openpyxl"
+        ) as writer:
 
-                    file_name="sac_compare_result.xlsx",
+            result_df.to_excel(
+                writer,
+                index=False,
+                sheet_name="Comparison"
+            )
 
-                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+            diff_df.to_excel(
+                writer,
+                index=False,
+                sheet_name="Differences"
+            )
 
-                )
+        output.seek(0)
+
+        st.download_button(
+            label="⬇ Download Comparison Report",
+            data=output,
+            file_name="sac_comparison_report.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        )
 
     except Exception as e:
 
-        st.error(
-            f"Application Error: {e}"
-        )
+        st.error(f"Application Error: {e}")
 
-# ==========================================
-# EMPTY STATE
-# ==========================================
+# =========================================
+# NO FILES
+# =========================================
 else:
 
-    st.info(
-        "⬅ Upload two Excel files to start comparison"
-    )
+    st.info("⬅ Upload both Excel files to start comparison")
 
-# ==========================================
+# =========================================
 # FOOTER
-# ==========================================
+# =========================================
 st.markdown("---")
 
-st.caption(
-    "SAC Story / Model Comparison Tool"
-)
+st.caption("SAC Story / Model Comparison Tool")
